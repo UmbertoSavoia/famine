@@ -187,7 +187,7 @@ section .text
 	endstruc
 
 _start:
-	;check_dir string_dir1
+	check_dir string_dir1
 	check_dir string_dir2
 	exit_my 0
 
