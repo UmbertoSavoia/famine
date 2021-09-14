@@ -48,10 +48,10 @@ int 	insert_payload(char *filename)
 
 	pt_note->p_type = PT_LOAD;
 	pt_note->p_flags = PF_R | PF_X | PF_W;
+	pt_note->p_offset = size;
 	pt_note->p_vaddr = 0xc000000 + size;
 	pt_note->p_filesz += size_payload;
 	pt_note->p_memsz += size_payload;
-	pt_note->p_offset = size;
 
 	offsetJump = ehdr->e_entry - pt_note->p_vaddr - ((uint32_t)size_payload);
 	*(Elf64_Word*)(payload + size_payload - 4) = (Elf64_Word)offsetJump;

