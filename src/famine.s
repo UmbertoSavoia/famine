@@ -290,6 +290,6 @@ infect_file:                          ; rdi = ptr nome file
     jmp .end
 
 firma:
-	db 'Famine version 1.0 (c)oded by usavoia-usavoia', 0x00
+    db 'Famine version 1.0 (c)oded by usavoia-usavoia', 0x00
 
 end_offset:
