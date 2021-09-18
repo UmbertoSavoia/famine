@@ -18,7 +18,8 @@ OBJS += $(SRC_A:.s=.o)
 all: $(TARGET)
 
 $(TARGET) : $(OBJS)
-	ld $^ -o $(TARGET) #$(LDFLAGS)
+	ld $^ -o $(TARGET)
+#$(LDFLAGS)
 
 #%.o: %.c
 #	$(CC) $(CFLAGS) -c $< -o $@
