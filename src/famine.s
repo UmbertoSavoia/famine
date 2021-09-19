@@ -99,29 +99,6 @@ _start:
     add rdi, 4104                     ; rdi = puntatore struct
     call loop_indir
 
-;-----------------------------DEBUG-----------------------------
-    mov rdi, 1
-    mov rsi, rsp
-    add rsi, 4096
-    add rsi, 8
-    add rsi, 32768
-    add rsi, 8
-    mov rdx, 11
-    mov rax, 1
-    syscall
-
-    mov rdi, 1
-    mov rsi, rsp
-    add rsi, 4096
-    add rsi, 8
-    add rsi, 32768
-    add rsi, 8
-    add rsi, 16
-    mov rdx, 10
-    mov rax, 1
-    syscall
-;---------------------------------------------------------------
-
     jmp exit
 
 open:                                 ; rdi = fd, rsi = permessi
